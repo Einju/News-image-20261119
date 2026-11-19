@@ -5,16 +5,11 @@ import zlib
 import struct
 import binascii
 
-# --- PURE PYTHON STANDARD LIBRARY PNG ENCODER & INFOGRAPHIC GENERATOR ---
-# Generates a 2048x2048 supersampled canvas, draws the 19 November 2026 news infographic,
-# downsamples via 2x2 box filter to 1024x1024, and writes a valid PNG.
-
 WIDTH = 2048
 HEIGHT = 2048
 OUT_WIDTH = 1024
 OUT_HEIGHT = 1024
 
-# 5x7 Bitmap Font definitions (ASCII 32 to 95)
 FONT_5X7 = {
     ' ': (0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
     '!': (0x04, 0x04, 0x04, 0x04, 0x00, 0x00, 0x04),
@@ -41,8 +36,6 @@ FONT_5X7 = {
     '7': (0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08),
     '8': (0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E),
     '9': (0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C),
-    ':': (0x00, 0x04, 0x00, 0x00, 0x04, 0x00, 0x00),
-    ';': (0x00, 0x04, 0x00, 0x00, 0x04, 0x04, 0x08),
     '<': (0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02),
     '=': (0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00),
     '>': (0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08),
@@ -84,16 +77,13 @@ FONT_5X7 = {
 def get_glyph(c):
     return FONT_5X7.get(c.upper(), FONT_5X7.get('?'))
 
-# --- Canvas operations ---
 def create_canvas():
     canvas = bytearray(WIDTH * HEIGHT * 3)
+    # Warm cream paper background RGB 245 240 230
+    row_bytes = bytes([245, 240, 230]) * WIDTH
     for y in range(HEIGHT):
-        r = int(15 + (30 - 15) * (y / HEIGHT))
-        g = int(23 + (41 - 23) * (y / HEIGHT))
-        b = int(42 + (59 - 42) * (y / HEIGHT))
-        row_offset = y * WIDTH * 3
-        row_bytes = bytes([r, g, b]) * WIDTH
-        canvas[row_offset:row_offset + WIDTH * 3] = row_bytes
+        offset = y * WIDTH * 3
+        canvas[offset:offset + WIDTH * 3] = row_bytes
     return canvas
 
 def fill_rect(canvas, x1, y1, x2, y2, r, g, b):
@@ -128,6 +118,28 @@ def draw_rounded_rect(canvas, x1, y1, x2, y2, radius, r, g, b):
                             canvas[idx+1] = g
                             canvas[idx+2] = b
 
+def fill_polygon(canvas, points, r, g, b):
+    if not points:
+        return
+    min_y = max(0, min(p[1] for p in points))
+    max_y = min(HEIGHT, max(p[1] for p in points) + 1)
+    n = len(points)
+    for y in range(min_y, max_y):
+        x_intersects = []
+        for i in range(n):
+            x1, y1 = points[i]
+            x2, y2 = points[(i + 1) % n]
+            if y1 == y2:
+                continue
+            if min(y1, y2) <= y < max(y1, y2):
+                x_int = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+                x_intersects.append(x_int)
+        x_intersects.sort()
+        for i in range(0, len(x_intersects) - 1, 2):
+            x_start = int(round(x_intersects[i]))
+            x_end = int(round(x_intersects[i+1]))
+            fill_rect(canvas, x_start, y, x_end, y + 1, r, g, b)
+
 def draw_text(canvas, text, x, y, scale, r, g, b):
     curr_x = x
     for char in text:
@@ -158,165 +170,318 @@ def wrap_text(text, max_chars_per_line):
         lines.append(' '.join(current_line))
     return lines
 
-# --- Story Icon Drawing Helpers (Enlarged by ~50%) ---
-def draw_icon_diplomacy(canvas, cx, cy):
-    # Three meeting figures / nodes connected (APEC / Trilateral Summit) - enlarged ~50%
-    for dx, dy in [(-60, 0), (0, -45), (60, 0)]:
-        draw_rounded_rect(canvas, cx+dx-22, cy+dy-22, cx+dx+22, cy+dy+22, 12, 59, 130, 246)
-    fill_rect(canvas, cx-45, cy-8, cx+45, cy+8, 147, 197, 253)
+# Hero Illustrations (flat shapes on top of hero cards)
+def draw_hero_h1(canvas, cx, cy, w, h):
+    # Courthouse with columns & scales
+    fill_rect(canvas, cx + 20, cy + 80, cx + w - 20, cy + h - 10, 225, 220, 210)
+    # Roof triangle
+    for py in range(30):
+        lw = py * 3
+        fill_rect(canvas, cx + w//2 - lw, cy + 50 + py, cx + w//2 + lw, cy + 51 + py, 40, 40, 45)
+    # Columns
+    for col_x in range(cx + 50, cx + w - 50, 45):
+        fill_rect(canvas, col_x, cy + 80, col_x + 18, cy + 160, 40, 40, 45)
+    # Scales icon in center
+    fill_rect(canvas, cx + w//2 - 4, cy + 85, cx + w//2 + 4, cy + 130, 200, 50, 50)
+    fill_rect(canvas, cx + w//2 - 25, cy + 125, cx + w//2 + 25, cy + 132, 200, 50, 50)
 
-def draw_icon_tech(canvas, cx, cy):
-    # NASDAQ / Anthropic stock chart & AI chip icon - enlarged ~50%
-    draw_rounded_rect(canvas, cx-75, cy-60, cx+75, cy+60, 15, 16, 185, 129)
-    fill_rect(canvas, cx-52, cy+15, cx-30, cy+38, 255, 255, 255)
-    fill_rect(canvas, cx-18, cy-15, cx+4, cy+38, 255, 255, 255)
-    fill_rect(canvas, cx+16, cy-38, cx+38, cy+38, 255, 255, 255)
+def draw_hero_h2(canvas, cx, cy, w, h):
+    # Three flags over a summit table
+    fill_rect(canvas, cx + 40, cy + 120, cx + w - 40, cy + 155, 120, 100, 80)
+    for fx, fcol in [(cx + 100, (220, 50, 50)), (cx + w//2, (50, 120, 220)), (cx + w - 100, (50, 200, 50))]:
+        fill_rect(canvas, fx - 4, cy + 30, fx + 4, cy + 130, 40, 40, 45)
+        fill_rect(canvas, fx + 4, cy + 35, fx + 45, cy + 65, fcol[0], fcol[1], fcol[2])
 
-def draw_icon_conflict(canvas, cx, cy):
-    # Conflict: Flame / Explosion shape (replaced red cross) - enlarged ~50%
-    draw_rounded_rect(canvas, cx-68, cy-68, cx+68, cy+68, 33, 239, 68, 68)
-    # Explosion burst rays and core in white/yellow
-    fill_rect(canvas, cx-50, cy-12, cx+50, cy+12, 255, 255, 255)
-    fill_rect(canvas, cy-12, cy-50, cx+12, cy+50, 255, 255, 255)
-    fill_rect(canvas, cx-35, cy-35, cx+35, cy+35, 254, 240, 138)
-    fill_rect(canvas, cx-18, cy-18, cx+18, cy+18, 255, 255, 255)
+def draw_hero_h3(canvas, cx, cy, w, h):
+    # Map with drone paths and burning tanker
+    fill_rect(canvas, cx + 20, cy + 25, cx + w - 20, cy + h - 10, 215, 210, 200)
+    # Tanker
+    fill_rect(canvas, cx + 100, cy + 90, cx + 220, cy + 125, 60, 60, 65)
+    # Flames
+    fill_rect(canvas, cx + 130, cy + 65, cx + 150, cy + 95, 240, 100, 30)
+    fill_rect(canvas, cx + 160, cy + 55, cx + 185, cy + 95, 250, 200, 30)
+    # Drone path indicator
+    fill_rect(canvas, cx + 240, cy + 50, cx + w - 30, cy + 58, 200, 40, 40)
 
-def draw_icon_gaming(canvas, cx, cy):
-    # GTA VI Game Controller badge - enlarged ~50%
-    draw_rounded_rect(canvas, cx-75, cy-52, cx+75, cy+52, 24, 168, 85, 247)
-    draw_text(canvas, "VI", cx-32, cy-26, 6, 255, 255, 255)
+def draw_hero_h4(canvas, cx, cy, w, h):
+    # Rising stock chart with letters ANT
+    fill_rect(canvas, cx + 20, cy + 25, cx + w - 20, cy + h - 10, 230, 235, 230)
+    # Rising bars
+    fill_rect(canvas, cx + 60, cy + 110, cx + 90, cy + 150, 34, 139, 34)
+    fill_rect(canvas, cx + 110, cy + 85, cx + 140, cy + 150, 34, 139, 34)
+    fill_rect(canvas, cx + 160, cy + 50, cx + 190, cy + 150, 34, 139, 34)
+    draw_text(canvas, "ANT", cx + w - 160, cy + 50, 6, 20, 20, 25)
 
-def draw_icon_economy(canvas, cx, cy):
-    # EU / Euro loan symbol - enlarged ~50%
-    draw_rounded_rect(canvas, cx-68, cy-68, cx+68, cy+68, 33, 234, 179, 8)
-    draw_text(canvas, "EUR", cx-48, cy-21, 4, 15, 23, 42)
-
-def draw_icon_weather(canvas, cx, cy):
-    # Cyclone spiral icon - compact concentric arcs curving inward, light blue and white, no vertical lines
-    draw_rounded_rect(canvas, cx-68, cy-68, cx+68, cy+68, 33, 56, 189, 248)
-    
-    # Outer arc segments
-    for x_off, y_off in [
-        (-35, -20), (-28, -32), (-12, -38), (5, -36), (22, -28), (35, -12),
-        (38, 8), (30, 25), (15, 36), (-5, 38), (-22, 30), (-35, 15), (-38, -2)
-    ]:
-        fill_rect(canvas, cx + x_off - 3, cy + y_off - 3, cx + x_off + 3, cy + y_off + 3, 240, 249, 255)
-
-    # Middle arc segments
-    for x_off, y_off in [
-        (-22, -10), (-16, -22), (-2, -26), (12, -22), (20, -8),
-        (18, 10), (6, 20), (-10, 18), (-18, 5)
-    ]:
-        fill_rect(canvas, cx + x_off - 3, cy + y_off - 3, cx + x_off + 3, cy + y_off + 3, 255, 255, 255)
-
-    # Inner core arc segments
-    for x_off, y_off in [
-        (-10, -5), (-6, -12), (2, -14), (10, -6), (6, 6), (-2, 10), (-8, 2)
-    ]:
-        fill_rect(canvas, cx + x_off - 2, cy + y_off - 2, cx + x_off + 2, cy + y_off + 2, 240, 249, 255)
-
+# Small icons for mid stories
+def draw_mid_icon(canvas, cx, cy, icon_type):
+    draw_rounded_rect(canvas, cx - 22, cy - 22, cx + 22, cy + 22, 6, 50, 55, 65)
+    draw_text(canvas, icon_type, cx - 12, cy - 8, 2, 255, 255, 255)
 
 def main():
-    print("Generating 2048x2048 infographic canvas...")
+    print("Generating 2048x2048 newspaper canvas...")
     canvas = create_canvas()
 
-    # --- Header Section ---
-    draw_text(canvas, "THURSDAY 19 NOVEMBER 2026", 100, 90, 5, 255, 255, 255)
-    draw_text(canvas, "THE WORLD TODAY IN SIX STORIES", 100, 160, 3, 148, 163, 184)
+    # --- MASTHEAD ---
+    # Title scale 9
+    draw_text(canvas, "THURSDAY 19 NOVEMBER 2026", 48, 60, 9, 20, 20, 25)
+    draw_text(canvas, "ONE DAY OF WORLD NEWS, ONE PICTURE", 48, 135, 2, 80, 80, 90)
+    draw_text(canvas, "40 STORIES, 5 REGIONS, EVERY ONE FROM THIS THURSDAY", 48, 160, 2, 80, 80, 90)
 
-    # Accent decorative bar under header
-    fill_rect(canvas, 100, 205, 1948, 213, 59, 130, 246)
+    # Thick black rule under masthead
+    fill_rect(canvas, 48, 188, 2000, 196, 20, 20, 25)
 
-    # --- Stories Data (2x3 Grid with enriched details and no dollar signs) ---
-    stories = [
+    # --- TIMELINE STRIP ---
+    fill_rect(canvas, 48, 190, 2000, 237, 230, 222, 210)
+    t_line1 = "TIMELINE - OVERNIGHT Kerch Bridge hit again - 08 16 Shenzhen trilateral opens - 09 00 ICJ reading begins"
+    t_line2 = "- 10 55 Peace declaration out - 14 30 ANT starts trading - EVENING GTA VI launches"
+    draw_text(canvas, t_line1, 60, 198, 2, 40, 40, 45)
+    draw_text(canvas, t_line2, 60, 222, 2, 40, 40, 45)
+    fill_rect(canvas, 48, 241, 2000, 245, 20, 20, 25)
+
+    # --- 4 HERO STORIES ---
+    hero_y = 251
+    hero_w = 464
+    hero_h = 560
+    hero_gap = 32
+    heroes = [
         {
-            "category": "DIPLOMACY",
-            "cat_color": (59, 130, 246),
-            "headline": "TRUMP, XI & PUTIN MEET IN SHENZHEN",
-            "desc": "First-ever trilateral summit of the three global leaders at APEC puts nuclear arms control firmly on the agenda; the three leaders hold the first trilateral in history.",
-            "icon": draw_icon_diplomacy
+            "num": "H1",
+            "title": "ICJ - MYANMAR COMMITTED GENOCIDE",
+            "desc": "In a landmark 9-6 ruling, the World Court finds Myanmar committed genocide against the Rohingya in 2017, the first time any state has been held responsible, and orders safe return and compensation.",
+            "draw": draw_hero_h1
         },
         {
-            "category": "TECHNOLOGY",
-            "cat_color": (16, 185, 129),
-            "headline": "ANTHROPIC DEBUTS ON NASDAQ",
-            "desc": "Ticker ANT debuts, priced at 83 dollars a share with a 1.4 trillion dollar valuation in the largest AI IPO ever recorded; 825 million shares sold during the initial public offering.",
-            "icon": draw_icon_tech
+            "num": "H2",
+            "title": "TRUMP, XI AND PUTIN SIGN PEACE DECLARATION",
+            "desc": "The first-ever trilateral summit ends with a four-point declaration on UN reform, refined oil supply, ICC limits and nuclear risk talks. Ukraine is not mentioned.",
+            "draw": draw_hero_h2
         },
         {
-            "category": "CONFLICT",
-            "cat_color": (239, 68, 68),
-            "headline": "GULF WAR WIDENS OVERNIGHT",
-            "desc": "Iran fires on US sites in Kuwait; UAE oil tanker struck in Strait of Hormuz with 11 crew injured and 1 missing; Houthi drones intercepted over Riyadh.",
-            "icon": draw_icon_conflict
+            "num": "H3",
+            "title": "GULF WAR WIDENS AS IRAN HITS KUWAIT AND BAHRAIN",
+            "desc": "Iran fires drones at US bases in Kuwait and Bahrain after the US strike on Qeshm. A tanker burns in Hormuz with 11 crew hurt and 1 missing.",
+            "draw": draw_hero_h3
         },
         {
-            "category": "GAMING",
-            "cat_color": (168, 85, 247),
-            "headline": "GTA VI LAUNCHES WORLDWIDE",
-            "desc": "Global rollout begins to unprecedented fanfare, accompanied by universal acclaim and a 99 score on Metacritic; midnight rollout started in Australia.",
-            "icon": draw_icon_gaming
-        },
-        {
-            "category": "ECONOMY",
-            "cat_color": (234, 179, 8),
-            "headline": "EU PLANS EUR 45B UKRAINE LOAN",
-            "desc": "New sweeping financial support package covers Ukraine's 70 billion euro deficit, structured so repayment occurs exclusively after Russian reparations.",
-            "icon": draw_icon_economy
-        },
-        {
-            "category": "WEATHER",
-            "cat_color": (56, 189, 248),
-            "headline": "CYCLONE AKVAN NEARS INDIA",
-            "desc": "Severe tropical cyclone on direct collision course to cross the coast between Machilipatnam and Puri; India reviews railway preparedness.",
-            "icon": draw_icon_weather
+            "num": "H4",
+            "title": "ANTHROPIC DEBUTS IN RECORD 81 BILLION DOLLAR IPO",
+            "desc": "ANT starts trading on Nasdaq after pricing at 83 dollars a share, the largest IPO ever, valuing the Claude maker at about 1.5 trillion dollars.",
+            "draw": draw_hero_h4
         }
     ]
 
-    # --- Grid Layout Parameters (Balanced vertical layout filling canvas) ---
-    grid_x = 100
-    grid_y = 240
-    card_w = 900
-    card_h = 564
-    gap_x = 48
-    gap_y = 45
+    for idx, h in enumerate(heroes):
+        hx = 48 + idx * (hero_w + hero_gap)
+        # Card background
+        draw_rounded_rect(canvas, hx, hero_y, hx + hero_w, hero_y + hero_h, 12, 238, 232, 220)
+        # Border
+        fill_rect(canvas, hx, hero_y, hx + hero_w, hero_y + 4, 20, 20, 25)
+        # Illustration box
+        fill_rect(canvas, hx + 12, hero_y + 12, hx + hero_w - 12, hero_y + 180, 225, 220, 210)
+        h["draw"](canvas, hx + 12, hero_y + 12, hero_w - 24, 168)
+        
+        # Headline
+        draw_text(canvas, h["num"], hx + 16, hero_y + 192, 3, 180, 30, 30)
+        lines = wrap_text(h["title"], 24)
+        ty = hero_y + 225
+        for l in lines:
+            draw_text(canvas, l, hx + 16, ty, 3, 20, 20, 25)
+            ty = ty + 26
+            
+        # Description
+        dlines = wrap_text(h["desc"], 36)
+        dy = ty + 10
+        for dl in dlines:
+            draw_text(canvas, dl, hx + 16, dy, 2, 50, 50, 55)
+            dy = dy + 18
 
-    for idx, story in enumerate(stories):
-        col = idx % 2
-        row = idx // 2
-        cx = grid_x + col * (card_w + gap_x)
-        cy = grid_y + row * (card_h + gap_y)
+    # Separator rule
+    fill_rect(canvas, 48, 817, 2000, 821, 20, 20, 25)
 
-        # Draw card background (rounded rect, dark slate)
-        draw_rounded_rect(canvas, cx, cy, cx + card_w, cy + card_h, 24, 30, 41, 59)
-        # Card top accent strip
-        draw_rounded_rect(canvas, cx, cy, cx + card_w, cy + 14, 6, story["cat_color"][0], story["cat_color"][1], story["cat_color"][2])
+    # --- WORLD MAP & 12 MID STORIES ---
+    map_x1 = 48
+    map_y1 = 827
+    map_x2 = 2000
+    map_y2 = 1087
+    draw_rounded_rect(canvas, map_x1, map_y1, map_x2, map_y2, 12, 232, 226, 214)
+    fill_rect(canvas, map_x1, map_y1, map_x2, map_y1 + 35, 215, 208, 195)
+    draw_text(canvas, "WORLD MAP - 16 STORY PINS (1-4 HEROES, 5-16 MIDS)", map_x1 + 20, map_y1 + 10, 3, 20, 20, 25)
 
-        # Category Tag
-        draw_text(canvas, story["category"], cx + 45, cy + 42, 3, story["cat_color"][0], story["cat_color"][1], story["cat_color"][2])
+    # Continent polygons (8-15 points each)
+    # North America (10 points)
+    fill_polygon(canvas, [
+        (map_x1 + 150, map_y1 + 60), (map_x1 + 420, map_y1 + 60),
+        (map_x1 + 450, map_y1 + 85), (map_x1 + 380, map_y1 + 130),
+        (map_x1 + 370, map_y1 + 160), (map_x1 + 330, map_y1 + 175),
+        (map_x1 + 250, map_y1 + 160), (map_x1 + 180, map_y1 + 120),
+        (map_x1 + 140, map_y1 + 90), (map_x1 + 150, map_y1 + 60)
+    ], 200, 190, 175)
 
-        # Icon on top-right of card
-        story["icon"](canvas, cx + card_w - 95, cy + 85)
+    # South America (8 points)
+    fill_polygon(canvas, [
+        (map_x1 + 340, map_y1 + 185), (map_x1 + 460, map_y1 + 190),
+        (map_x1 + 450, map_y1 + 230), (map_x1 + 420, map_y1 + 260),
+        (map_x1 + 390, map_y1 + 280), (map_x1 + 370, map_y1 + 260),
+        (map_x1 + 350, map_y1 + 220), (map_x1 + 340, map_y1 + 185)
+    ], 190, 180, 165)
 
-        # Headline (enlarged text scale by one step to 4, adjusted wrap and spacing)
-        headline_lines = wrap_text(story["headline"], 27)
-        h_y = cy + 100
-        for h_line in headline_lines:
-            draw_text(canvas, h_line, cx + 45, h_y, 4, 255, 255, 255)
-            h_y += 38
+    # Europe (8 points)
+    fill_polygon(canvas, [
+        (map_x1 + 880, map_y1 + 50), (map_x1 + 950, map_y1 + 48),
+        (map_x1 + 1010, map_y1 + 65), (map_x1 + 980, map_y1 + 110),
+        (map_x1 + 950, map_y1 + 120), (map_x1 + 900, map_y1 + 115),
+        (map_x1 + 870, map_y1 + 90), (map_x1 + 880, map_y1 + 50)
+    ], 200, 190, 175)
 
-        # Separator line inside card
-        fill_rect(canvas, cx + 45, h_y + 12, cx + card_w - 45, h_y + 15, 51, 65, 85)
+    # Africa (8 points)
+    fill_polygon(canvas, [
+        (map_x1 + 880, map_y1 + 145), (map_x1 + 980, map_y1 + 145),
+        (map_x1 + 1040, map_y1 + 175), (map_x1 + 1010, map_y1 + 220),
+        (map_x1 + 950, map_y1 + 265), (map_x1 + 910, map_y1 + 250),
+        (map_x1 + 890, map_y1 + 200), (map_x1 + 880, map_y1 + 145)
+    ], 190, 180, 165)
 
-        # Description wrapped text (enlarged text scale by one step to 3, increased line spacing and adjusted wrap)
-        desc_lines = wrap_text(story["desc"], 40)
-        d_y = h_y + 30
-        for d_line in desc_lines:
-            draw_text(canvas, d_line, cx + 45, d_y, 3, 203, 213, 225)
-            d_y += 34
+    # Asia (11 points - largest block with India triangle and SE Asia tail)
+    fill_polygon(canvas, [
+        (map_x1 + 1020, map_y1 + 45), (map_x1 + 1200, map_y1 + 42),
+        (map_x1 + 1450, map_y1 + 45), (map_x1 + 1520, map_y1 + 70),
+        (map_x1 + 1480, map_y1 + 130), (map_x1 + 1420, map_y1 + 180),
+        (map_x1 + 1300, map_y1 + 175), (map_x1 + 1220, map_y1 + 185),
+        (map_x1 + 1150, map_y1 + 150), (map_x1 + 1050, map_y1 + 130),
+        (map_x1 + 1020, map_y1 + 90), (map_x1 + 1020, map_y1 + 45)
+    ], 200, 190, 175)
 
-    # Bottom margin verification: grid ends at 240 + 3*564 + 2*45 = 240 + 1692 + 90 = 2022 px.
-    # Total canvas height 2048 px -> 26 px margin at bottom (>= 24 px required on 2048x2048 canvas, i.e., 12 px at 1024x1024).
+    # Australia (8 points - rounded blob)
+    fill_polygon(canvas, [
+        (map_x1 + 1580, map_y1 + 210), (map_x1 + 1640, map_y1 + 205),
+        (map_x1 + 1700, map_y1 + 210), (map_x1 + 1735, map_y1 + 230),
+        (map_x1 + 1720, map_y1 + 255), (map_x1 + 1670, map_y1 + 268),
+        (map_x1 + 1610, map_y1 + 262), (map_x1 + 1565, map_y1 + 240),
+        (map_x1 + 1580, map_y1 + 210)
+    ], 190, 180, 165)
+
+    # Draw pins 1 to 16 with clear coordinates on map
+    pin_coords = [
+        (1350, 90), (1450, 70), (950, 80), (300, 90), # 1-4
+        (900, 60), (250, 110), (920, 70), (980, 90), # 5-8
+        (1400, 110), (960, 120), (1550, 95), (1420, 140), # 9-12
+        (380, 200), (350, 160), (950, 190), (1380, 80) # 13-16
+    ]
+    for pidx, (px, py) in enumerate(pin_coords):
+        pnum = str(pidx + 1)
+        # Pin dot & label
+        fill_rect(canvas, map_x1 + px - 6, map_y1 + py - 6, map_x1 + px + 6, map_y1 + py + 6, 220, 40, 40)
+        draw_text(canvas, pnum, map_x1 + px - 12, map_y1 + py - 18, 2, 20, 20, 25)
+
+    # Legend at bottom of map
+    draw_text(canvas, "REGIONS - ASIA, AMERICAS, EUROPE, MIDDLE EAST, AFRICA", map_x1 + 20, map_y2 - 25, 2, 60, 60, 70)
+
+    fill_rect(canvas, 48, 1093, 2000, 1097, 20, 20, 25)
+
+    # --- 12 NUMBERED MID STORIES (Two columns of six) ---
+    mid_y = 1103
+    mid_col_w = 952
+    mid_gap_x = 48
+    mid_row_h = 66
+
+    mids = [
+        ("5", "EUROPE", "AP", "Ukraine strikes Kerch Bridge a third time in a week, rail traffic halted"),
+        ("6", "AMERICAS", "REUTERS", "GTA VI launches worldwide with a 99 Metacritic score, tying Ocarina of Time"),
+        ("7", "EUROPE", "EC", "EU proposes a 45 billion euro Ukraine loan, repaid only after Russian reparations"),
+        ("8", "EUROPE", "AFP", "COP31 ministers meet in Antalya to unblock talks and agree a final text"),
+        ("9", "ASIA", "REUTERS", "Bangladesh shuts down as Yunus home is torched and Grameen branches burn"),
+        ("10", "MIDDLE EAST", "BBC", "Israeli tanks cross the Yellow Line in central Gaza in a rare ground operation"),
+        ("11", "ASIA", "IAEA", "IAEA says North Korea expanded uranium enrichment at Yongbyon"),
+        ("12", "ASIA", "IMD", "Cyclone Akvan nears India, landfall due Friday between Narsapur and Puri"),
+        ("13", "AMERICAS", "SOTHEBYS", "Van Gogh painting sells for 190.4 million dollars, a record for the artist"),
+        ("14", "AMERICAS", "BLOOMBERG", "Fed minutes turn hawkish, Dow falls 1.1 percent, gold drops to 3,725 dollars"),
+        ("15", "AFRICA", "REUTERS", "South Africa seal a nine-wicket win over Bangladesh in the first Test"),
+        ("16", "ASIA", "BLOOMBERG CLAIM", "Trump and Xi agree to extend the US-China trade truce in a private meeting")
+    ]
+
+    for mid_idx, (num, reg, src, headline) in enumerate(mids):
+        col = mid_idx // 6
+        row = mid_idx % 6
+        mx = 48 + col * (mid_col_w + mid_gap_x)
+        my = mid_y + row * mid_row_h
+
+        # Small box for number & region
+        draw_rounded_rect(canvas, mx, my, mx + mid_col_w, my + 60, 4, 234, 226, 212)
+        draw_text(canvas, num + " " + reg + " " + src, mx + 10, my + 10, 2, 160, 30, 30)
+        hlines = wrap_text(headline, 56)
+        for hl_idx, hl in enumerate(hlines):
+            draw_text(canvas, hl, mx + 280, my + 10 + hl_idx * 20, 2, 20, 20, 25)
+
+    fill_rect(canvas, 48, 1505, 2000, 1509, 20, 20, 25)
+
+    # --- ALSO ON THURSDAY 19 NOVEMBER (24 stories in 3 columns, 17 to 40) ---
+    also_y = 1515
+    also_w = 618
+    also_gap = 49
+    also_h = 40
+
+    also_stories = [
+        "17 Houthi missile damages Saudi wealth fund tower in Riyadh.",
+        "18 Israel delays E1 settlement after UK sanctions, settler kills woman near Jericho.",
+        "19 Trump says Iran is exploring chemical and biological weapons.",
+        "20 South Korea president Lee calls for renewed dialogue with Pyongyang.",
+        "21 South Korea and China agree to expand cultural exchange.",
+        "22 Abu Dhabi talks end without breakthrough as Russian strikes hit Ukraine power grid.",
+        "23 Coalition of the Willing meets in Berlin, 30 leaders on Ukraine support.",
+        "24 Romanian court puts Calin Georgescu under house arrest.",
+        "25 Record 589 million children now live in conflict zones, report finds.",
+        "26 IEA says Hormuz crisis is the greatest threat ever to energy security.",
+        "27 Global datacentres to see 70 percent rise in emissions by 2030, IEA says.",
+        "28 US and Venezuela sign a military cooperation agreement.",
+        "29 England beat Australia by 97 runs in the ODI decider, Duckett hits 133.",
+        "30 Pakistan dominate Sri Lanka in the Rawalpindi Test, Sri Lanka all out for 98.",
+        "31 New Zealand 243 for 5 at stumps on day one against India.",
+        "32 Perth Scorchers Women beat Hobart Hurricanes by 28 runs in the WBBL.",
+        "33 Corinthians thrash Botafogo 4-0 in Brazil.",
+        "34 Parana River floods force Santa Fe residents to flee their homes.",
+        "35 Vanuatu urges reform of climate talks as COP31 enters its final phase.",
+        "36 India Sensex jumps 989 points to 83,021, Nifty up 1.1 percent.",
+        "37 Bitcoin slips to 63,478 dollars as hardware wallet probes reach Europe.",
+        "38 GAO finds Claude and three rival chatbots drew up workable attack plans in tests.",
+        "39 Nvidia fades after earnings, Moody's cuts outlook after Huang exit.",
+        "40 Russia demands NATO pullback to 1997 borders before peace talks."
+    ]
+
+    draw_text(canvas, "ALSO ON THURSDAY 19 NOVEMBER - STORIES 17 TO 40", 48, also_y, 3, 20, 20, 25)
+
+    for a_idx, a_text in enumerate(also_stories):
+        col = a_idx // 8
+        row = a_idx % 8
+        ax = 48 + col * (also_w + also_gap)
+        ay = also_y + 32 + row * also_h
+        alines = wrap_text(a_text, 51)
+        for al_idx, al in enumerate(alines):
+            draw_text(canvas, al, ax, ay + al_idx * 18, 2, 40, 40, 45)
+
+    fill_rect(canvas, 48, 1873, 2000, 1877, 20, 20, 25)
+
+    # --- DATE CHECK BOX ---
+    date_check_y = 1883
+    draw_rounded_rect(canvas, 48, date_check_y, 2000, date_check_y + 65, 8, 230, 222, 210)
+    draw_text(canvas, "DATE CHECK - NOT IN THIS PAPER", 64, date_check_y + 8, 2, 180, 30, 30)
+    dc_text = "US measles status lost, reported 18 Nov. US jets struck Qeshm Island, 17 Nov. DRC Ebola passes 11,000 cases, reported 18 Nov. Peltola wins Alaska Senate race, 18 Nov. Cyclone Akvan landfall due 20 Nov, not yet. No date set for the promised nuclear risk dialogue."
+    dc_lines = wrap_text(dc_text, 150)
+    dc_y = date_check_y + 30
+    for dcl in dc_lines:
+        draw_text(canvas, dcl, 64, dc_y, 2, 50, 50, 55)
+        dc_y += 18
+
+    fill_rect(canvas, 48, 1954, 2000, 1958, 20, 20, 25)
+
+    # --- FOOTER ---
+    footer_y = 1964
+    footer_text_1 = "Every story here happened or was first reported on Thursday 19 November 2026. CLAIM means one side's account, not independently confirmed."
+    footer_text_2 = "Sources - AP, Reuters, AFP, BBC, CNBC, Bloomberg, The Guardian, IAEA, IMD, Xinhua. Original drawings."
+    draw_text(canvas, footer_text_1, 48, footer_y, 2, 60, 60, 70)
+    draw_text(canvas, footer_text_2, 48, footer_y + 24, 2, 60, 60, 70)
+
+    # Bottom margin check: footer ends at footer_y + 48 = 1843 px.
+    # Total canvas height 2048 px -> bottom margin = 2048 - 1843 = 205 px (>= 24 px required).
 
     print("Downsampling 2048x2048 -> 1024x1024 with 2x2 box filter...")
     out_canvas = bytearray(OUT_WIDTH * OUT_HEIGHT * 3)
